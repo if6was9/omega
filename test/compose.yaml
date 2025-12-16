@@ -1,0 +1,8 @@
+services:
+  web:
+    image: nginx
+
+
+x-omega:
+  hello: 1
+  fizz: buzz
