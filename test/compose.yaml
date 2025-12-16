@@ -4,4 +4,5 @@ services:
 
 
 x-omega:
-  fizz: buzz
+  run-on:
+  - foo: bar
