@@ -4,5 +4,4 @@ services:
 
 
 x-omega:
-  hello: 1
   fizz: buzz
