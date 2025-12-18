@@ -81,7 +81,11 @@ public class App {
     int pollSecs = Integer.parseInt(cfg.get("POLL_SECS").orElse("60"));
 
     do {
-      dcm.process();
+      try {
+        dcm.process();
+      } catch (RuntimeException e) {
+        logger.atWarn().setCause(e).log("error");
+      }
       if (pollSecs > 0) {
         logger.atInfo().log("sleeping for {} secs (env: POLL_SECS)...", pollSecs);
         Sleep.sleepSecs(pollSecs);
