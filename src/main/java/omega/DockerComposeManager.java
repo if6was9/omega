@@ -1,6 +1,5 @@
 package omega;
 
-import bx.util.BxException;
 import bx.util.Json;
 import bx.util.S;
 import bx.util.Slogger;
@@ -24,6 +23,7 @@ import java.util.Set;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
+import org.apache.commons.compress.utils.Lists;
 import org.slf4j.Logger;
 import org.zeroturnaround.exec.ProcessExecutor;
 import org.zeroturnaround.exec.stream.slf4j.Slf4jStream;
@@ -71,23 +71,6 @@ public class DockerComposeManager {
         .filter(it -> new File(it).exists())
         .findFirst()
         .orElse("docker");
-  }
-
-  public void getOmegaContainers() {
-    var client = getClient();
-
-    client
-        .listContainersCmd()
-        .withShowAll(false)
-        .exec()
-        .forEach(
-            c -> {
-              String name =
-                  List.of(c.getNames()).stream()
-                      .map(n -> n.startsWith("/") ? n.substring(1) : n)
-                      .findFirst()
-                      .orElse(null);
-            });
   }
 
   Supplier<String> engineIdSupplier = Suppliers.memoize(this::fetchEngineId);
@@ -149,7 +132,7 @@ public class DockerComposeManager {
 
                       return n;
                     } catch (IOException e) {
-                      throw new BxException(e);
+                      throw new OmegaException(e);
                     }
                   } else {
                     logger.atDebug().log("no x-omega: {}", p);
@@ -184,7 +167,7 @@ public class DockerComposeManager {
               });
 
     } catch (IOException e) {
-      throw new BxException(e);
+      throw new OmegaException(e);
     }
   }
 
@@ -196,7 +179,7 @@ public class DockerComposeManager {
           .redirectErrorStream(true)
           .execute();
     } catch (IOException | InterruptedException | TimeoutException e) {
-      throw new BxException(e);
+      throw new OmegaException(e);
     }
   }
 
@@ -214,7 +197,7 @@ public class DockerComposeManager {
           .redirectErrorStream(true)
           .execute();
     } catch (IOException | InterruptedException | TimeoutException e) {
-      throw new BxException(e);
+      throw new OmegaException(e);
     }
   }
 
@@ -234,7 +217,7 @@ public class DockerComposeManager {
           .execute();
 
     } catch (IOException | InterruptedException | TimeoutException e) {
-      throw new BxException(e);
+      throw new OmegaException(e);
     }
   }
 
@@ -245,11 +228,31 @@ public class DockerComposeManager {
     return n.path("enabled").asBoolean(true);
   }
 
+  private List<JsonNode> asList(JsonNode n) {
+    if (n == null) {
+      return List.of();
+    }
+    if (n.isArray()) {
+      List<JsonNode> tmp = Lists.newArrayList();
+      for (JsonNode item : n) {
+        tmp.add(item);
+      }
+      return List.copyOf(tmp);
+    }
+    if (n.isObject()) {
+      return List.of(n);
+    }
+    if (n.isNull() || n.isMissingNode()) {
+      return List.of();
+    }
+    return List.of(n);
+  }
+
   private Optional<JsonNode> ours(JsonNode compose) {
 
     String id = getEngineId();
-    for (JsonNode run : compose.path("x-omega").path("run")) {
-      if (run.path("id").asString("INVALID").equals(id)) {
+    for (JsonNode run : asList(compose.path("x-omega").path("run"))) {
+      if (S.isNotBlank(id) && run.path("id").asString("").equals(id)) {
         return Optional.of(run);
       }
     }

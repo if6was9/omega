@@ -3,6 +3,7 @@ services:
     image: ghcr.io/if6was9/omega
     environment:
       GIT_URL: https://github.com/if6was9/omega
+      POLL_SECS: 10
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${HOME}/.ssh:/root/.ssh

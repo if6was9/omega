@@ -66,6 +66,12 @@ public class App {
 
     gmm.baseDir(p.toFile());
 
+    cfg.get("GIT_REF")
+        .ifPresent(
+            ref -> {
+              gmm.targetRef(ref);
+            });
+
     DockerComposeManager dcm = new DockerComposeManager();
 
     dcm.dockerVersion();

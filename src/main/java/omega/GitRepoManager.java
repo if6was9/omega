@@ -1,6 +1,5 @@
 package omega;
 
-import bx.util.BxException;
 import bx.util.Config;
 import bx.util.S;
 import bx.util.Slogger;
@@ -14,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import org.eclipse.jgit.api.CloneCommand;
 import org.eclipse.jgit.api.FetchCommand;
@@ -22,8 +22,11 @@ import org.eclipse.jgit.api.GitCommand;
 import org.eclipse.jgit.api.ResetCommand.ResetType;
 import org.eclipse.jgit.api.TransportCommand;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.api.errors.NoHeadException;
+import org.eclipse.jgit.errors.RepositoryNotFoundException;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.FetchResult;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
@@ -38,6 +41,11 @@ public class GitRepoManager extends RepoManager {
   String targetRef = null;
 
   boolean forceRecovery = false;
+
+  String lastRevision = null;
+
+  AtomicInteger cloneCount = new AtomicInteger();
+  AtomicInteger updateCount = new AtomicInteger();
 
   public GitRepoManager gitUrl(String url) {
     this.gitUrl = url;
@@ -54,6 +62,10 @@ public class GitRepoManager extends RepoManager {
     checkout(targetRef);
   }
 
+  public int getCloneCount() {
+    return this.cloneCount.get();
+  }
+
   public void checkout(String refName) {
 
     logger.atInfo().log("checkout({})", refName);
@@ -63,10 +75,45 @@ public class GitRepoManager extends RepoManager {
       logger.atInfo().log("clean checkout of {}", refName);
       org.eclipse.jgit.lib.Ref ref = git.checkout().setForced(true).setName(refName).call();
 
+      logRevisionChange(git);
       git.reset().setMode(ResetType.HARD).setRef(refName).call();
+      logRevisionChange(git);
 
     } catch (GitAPIException | IOException e) {
-      throw new BxException(e);
+      throw new OmegaException(e);
+    }
+  }
+
+  private void logRevisionChange(Git git) {
+    try {
+      ObjectId id = git.getRepository().resolve(Constants.HEAD);
+
+      String currentRev = id.getName();
+
+      if (!S.notBlank(currentRev).orElse("").equals(lastRevision)) {
+        logger.atInfo().log("revision {} ==> {}", lastRevision, currentRev);
+        lastRevision = currentRev;
+      }
+
+    } catch (IOException | RuntimeException e) {
+      logger.atWarn().setCause(e).log("problem");
+    }
+  }
+
+  public void pull() {
+    try (Closer closer = Closer.create()) {
+      Git git = Git.open(getBaseDir());
+      defer(closer, git);
+      logger.atInfo().log("git pull");
+
+      var pullCommand = git.pull();
+      applyTransportConfig(pullCommand);
+      pullCommand.call();
+      logRevisionChange(git);
+    } catch (NoHeadException e) {
+      clean();
+    } catch (IOException | GitAPIException e) {
+      throw new OmegaException(e);
     }
   }
 
@@ -80,8 +127,9 @@ public class GitRepoManager extends RepoManager {
       FetchCommand fc = git.fetch().setRefSpecs("+refs/heads/*:refs/remotes/origin/*");
       FetchResult fr = fc.call();
 
+      logRevisionChange(git);
     } catch (GitAPIException | IOException e) {
-      throw new BxException(e);
+      throw new OmegaException(e);
     }
   }
 
@@ -111,21 +159,43 @@ public class GitRepoManager extends RepoManager {
 
     logger.atInfo().log("*** GitRepoManager.update() *** ");
 
+    updateCount.incrementAndGet();
     createTempWorkingDirIfNecessary();
 
     if (isMissingOrEmpty(getBaseDir())) {
+      logger.atInfo().log("base dir missing");
       clone();
     } else {
       try {
-        fetch();
 
+        try (Closer closer = Closer.create()) {
+          Git git = Git.open(getBaseDir());
+          defer(closer, git);
+
+          StoredConfig config = git.getRepository().getConfig();
+          String url = config.getString("remote", "origin", "url");
+
+          logger.atInfo().log("remote URL: {}", url);
+          if (S.isBlank(url) || !S.notBlank(url).orElse("").equals(this.gitUrl)) {
+
+            logger.atInfo().log("url does not match");
+
+          } else {
+            logger.atInfo().log("URL matches: {}", url);
+          }
+
+        } catch (RepositoryNotFoundException e) {
+          forceReclone();
+        } catch (IOException e) {
+          throw new OmegaException(e);
+        }
         // If we started with a cloned repo but didn't have targetRef set,
         // we need to find it from the checked-out repo.  If we don't set targetRef here,
         // the clean() operation will fail.
         if (S.isBlank(targetRef)) {
           targetRef = getBranchOrRef();
         }
-
+        pull();
         clean();
       } catch (RuntimeException e) {
         logger.atWarn().setCause(e).log("problem with fetch/clean");
@@ -154,7 +224,7 @@ public class GitRepoManager extends RepoManager {
         baseDir(new File(tmpDir, "repo"));
       }
     } catch (IOException e) {
-      throw new BxException(e);
+      throw new OmegaException(e);
     }
   }
 
@@ -162,11 +232,11 @@ public class GitRepoManager extends RepoManager {
 
     Config cfg = Config.get();
 
-    if (cfg.get("GIT_PASSWORD").isPresent()) {
+    if (cfg.get("GIT_PASSWORD").isPresent() || cfg.get("GIT_USERNAME").isPresent()) {
 
       UsernamePasswordCredentialsProvider cp =
           new UsernamePasswordCredentialsProvider(
-              cfg.get("GIT_USERNAME").orElse(""), cfg.get("GIT_PASSWORD").get().toCharArray());
+              cfg.get("GIT_USERNAME").orElse(""), cfg.get("GIT_PASSWORD").orElse("").toCharArray());
       return Optional.of(cp);
     }
     return Optional.empty();
@@ -194,7 +264,7 @@ public class GitRepoManager extends RepoManager {
 
       return id.getName();
     } catch (IOException e) {
-      throw new BxException(e);
+      throw new OmegaException(e);
     }
   }
 
@@ -210,7 +280,7 @@ public class GitRepoManager extends RepoManager {
       defer(closer, g);
       func.accept(g);
     } catch (IOException e) {
-      throw new BxException(e);
+      throw new OmegaException(e);
     }
   }
 
@@ -224,6 +294,8 @@ public class GitRepoManager extends RepoManager {
       Path p = getBaseDir().toPath();
       logger.atInfo().log("cloning {} into {}", gitUrl, p.toFile());
 
+      int count = cloneCount.incrementAndGet();
+      logger.atInfo().log("clone count: {}", count);
       CloneCommand cc = Git.cloneRepository();
       applyTransportConfig(cc);
 
@@ -246,7 +318,7 @@ public class GitRepoManager extends RepoManager {
 
       return p.toFile();
     } catch (IOException | GitAPIException e) {
-      throw new BxException(e);
+      throw new OmegaException(e);
     }
   }
 
@@ -255,7 +327,7 @@ public class GitRepoManager extends RepoManager {
     try {
       return f1.getCanonicalPath().equals(f2.getCanonicalPath());
     } catch (IOException e) {
-      throw new BxException(e);
+      throw new OmegaException(e);
     }
   }
 
@@ -265,7 +337,7 @@ public class GitRepoManager extends RepoManager {
       defer(closer, git);
       return git.getRepository().getFullBranch();
     } catch (IOException e) {
-      throw new BxException(e);
+      throw new OmegaException(e);
     }
   }
 
@@ -279,18 +351,18 @@ public class GitRepoManager extends RepoManager {
     } else if (dir.isDirectory()) {
       // ok
     } else {
-      throw new BxException("unknown fs type: " + dir);
+      throw new OmegaException("unknown fs type: " + dir);
     }
 
     if (isSame(new File("/"), dir) || isSame(dir, new File(System.getProperty("user.home")))) {
 
-      throw new BxException("cannot delete: " + getBaseDir());
+      throw new OmegaException("cannot delete: " + getBaseDir());
     }
     logger.atInfo().log("deleting " + dir.getAbsolutePath());
     try {
       MoreFiles.deleteRecursively(dir.toPath(), RecursiveDeleteOption.ALLOW_INSECURE);
     } catch (IOException e) {
-      throw new BxException(e);
+      throw new OmegaException(e);
     }
   }
 }
