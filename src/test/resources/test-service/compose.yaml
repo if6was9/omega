@@ -6,4 +6,4 @@ services:
 x-omega:
   run:
     id: 57e8cf92-eaf3-49ff-a9cf-baf6112b76dc
-    enabled: false
+    enabled: true
