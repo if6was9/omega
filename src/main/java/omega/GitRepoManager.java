@@ -91,7 +91,7 @@ public class GitRepoManager extends RepoManager {
       String currentRev = id.getName();
 
       if (!S.notBlank(currentRev).orElse("").equals(lastRevision)) {
-        logger.atInfo().log("revision {} ==> {}", S.notBlank(lastRevision).orElse(""), currentRev);
+        logger.atInfo().log("revision {} ==> {}", S.notBlank(lastRevision).orElse("<none>"), currentRev);
         lastRevision = currentRev;
       }
 
