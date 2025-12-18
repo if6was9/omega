@@ -6,18 +6,9 @@ import bx.util.Sleep;
 import bx.util.Slogger;
 import java.io.File;
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.nio.file.Path;
-import java.security.PublicKey;
-import java.util.List;
-
-import org.apache.sshd.client.config.hosts.HostConfigEntry;
-import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.SshSessionFactory;
-import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.eclipse.jgit.transport.sshd.JGitKeyCache;
-import org.eclipse.jgit.transport.sshd.ServerKeyDatabase;
-import org.eclipse.jgit.transport.sshd.SshdSessionFactory;
 import org.eclipse.jgit.transport.sshd.SshdSessionFactoryBuilder;
 import org.eclipse.jgit.util.FS;
 import org.slf4j.Logger;
@@ -25,81 +16,70 @@ import tools.jackson.databind.ObjectMapper;
 
 public class App {
 
-	static Logger logger = Slogger.forEnclosingClass();
+  static Logger logger = Slogger.forEnclosingClass();
 
-	public static ObjectMapper mapper = new ObjectMapper();
+  public static ObjectMapper mapper = new ObjectMapper();
 
-	static Config cfg = Config.get();
-	public static void configureSsh() {
-		
-		
-		var builder = new SshdSessionFactoryBuilder() 
-				.setPreferredAuthentications("publickey,password")
-				.setHomeDirectory(FS.DETECTED.userHome()).setSshDirectory(new File(FS.DETECTED.userHome(),".ssh"));
-		
-		boolean checkHostKeys=true;
-		
-		try {
-			checkHostKeys = Boolean.parseBoolean(cfg.get("VERIFY_HOST_KEY").orElse("true"));
-		}
-		catch  (RuntimeException e) {
-				logger.atWarn().setCause(e).log("could not parse VERIFY_HOST_KEY");
-		}
-	
-		
-		if (checkHostKeys==false) {
-				
-				logger.atWarn().log("host key verification is disabled");
-				builder.setServerKeyDatabase((homeDir,dotSshDir)->{
-					
-					
-					return new InsecureServerKeyDatabase();
-				});
-		}
-				
-		var sshdSessionFactory = builder.build(new JGitKeyCache());
-		
-	
-		SshSessionFactory.setInstance(sshdSessionFactory);
+  static Config cfg = Config.get();
 
-		
-	}
-	public static void main(String[] args) throws IOException {
+  public static void configureSsh() {
 
-		logger.atInfo().log("container: {}", RuntimeEnvironment.get().isRunningInContainer());
+    var builder =
+        new SshdSessionFactoryBuilder()
+            .setPreferredAuthentications("publickey,password")
+            .setHomeDirectory(FS.DETECTED.userHome())
+            .setSshDirectory(new File(FS.DETECTED.userHome(), ".ssh"));
 
-	
+    boolean checkHostKeys = true;
 
-		
-		configureSsh();
+    try {
+      checkHostKeys = Boolean.parseBoolean(cfg.get("VERIFY_HOST_KEY").orElse("true"));
+    } catch (RuntimeException e) {
+      logger.atWarn().setCause(e).log("could not parse VERIFY_HOST_KEY");
+    }
 
-		
+    if (checkHostKeys == false) {
 
-		String gitUrl = cfg.get("GIT_URL").orElse(null);
+      logger.atWarn().log("host key verification is disabled");
+      builder.setServerKeyDatabase(
+          (homeDir, dotSshDir) -> {
+            return new InsecureServerKeyDatabase();
+          });
+    }
 
-		Path p = new File("./repo").toPath();
+    var sshdSessionFactory = builder.build(new JGitKeyCache());
 
-		GitRepoManager gmm = new GitRepoManager().gitUrl(gitUrl);
+    SshSessionFactory.setInstance(sshdSessionFactory);
+  }
 
-		gmm.baseDir(p.toFile());
+  public static void main(String[] args) throws IOException {
 
-	
-		DockerComposeManager dcm = new DockerComposeManager();
+    logger.atInfo().log("container: {}", RuntimeEnvironment.get().isRunningInContainer());
 
-		dcm.dockerVersion();
+    configureSsh();
 
-		dcm.manifestManager(gmm);
+    String gitUrl = cfg.get("GIT_URL").orElse(null);
 
-		int pollSecs = Integer.parseInt(cfg.get("POLL_SECS").orElse("60"));
-		
-		
-		do {
-			dcm.process();
-			if (pollSecs>0) {
-				logger.atInfo().log("sleeping for {} secs (env: POLL_SECS)...",pollSecs);
-				Sleep.sleepSecs(pollSecs);
-			}
-		}
-		while (pollSecs>0);
-	}
+    Path p = new File("./repo").toPath();
+
+    GitRepoManager gmm = new GitRepoManager().gitUrl(gitUrl);
+
+    gmm.baseDir(p.toFile());
+
+    DockerComposeManager dcm = new DockerComposeManager();
+
+    dcm.dockerVersion();
+
+    dcm.manifestManager(gmm);
+
+    int pollSecs = Integer.parseInt(cfg.get("POLL_SECS").orElse("60"));
+
+    do {
+      dcm.process();
+      if (pollSecs > 0) {
+        logger.atInfo().log("sleeping for {} secs (env: POLL_SECS)...", pollSecs);
+        Sleep.sleepSecs(pollSecs);
+      }
+    } while (pollSecs > 0);
+  }
 }

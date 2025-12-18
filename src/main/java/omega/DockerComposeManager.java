@@ -87,8 +87,6 @@ public class DockerComposeManager {
                       .map(n -> n.startsWith("/") ? n.substring(1) : n)
                       .findFirst()
                       .orElse(null);
-
-              System.out.println(c.getLabels());
             });
   }
 
@@ -126,7 +124,7 @@ public class DockerComposeManager {
 
                   if (n.path("x-omega").isObject()) {
 
-                	  logger.atInfo().log("x-omega: {}",p);
+                    logger.atInfo().log("x-omega: {}", p);
                     String filePath = p.toFile().toString();
                     if (filePath.startsWith(manifestManager.getBaseDir().getPath())) {
                       filePath =
@@ -139,7 +137,8 @@ public class DockerComposeManager {
                     try {
                       ObjectNode omega = (ObjectNode) n.path("x-omega");
                       omega.put("composePath", filePath);
-                      omega.put("gitRef", S.notBlank(manifestManager.getCurrentRevision()).orElse(""));
+                      omega.put(
+                          "gitRef", S.notBlank(manifestManager.getCurrentRevision()).orElse(""));
                       omega.put(
                           "baseDir",
                           manifestManager.getBaseDir().toPath().toFile().getCanonicalPath());
@@ -329,28 +328,28 @@ public class DockerComposeManager {
               String runningComposeFile = labels.get("com.docker.compose.project.config_files");
 
               if (isCurrentProcess(container)) {
-            	  logger.atInfo().log("ignoring {}{} because it is this process",container.getId(),List.of(container.getNames()));
-              }
-              else {
-              // We only care about omega-managed compose files
-              if (runningComposeFile != null && runningComposeFile.contains("/omega/")) {
-                if (!ourComposeFiles.contains(runningComposeFile)) {
-                	
-                	
-                        terminateContainer(container);
+                logger.atInfo().log(
+                    "ignoring {}{} because it is this process",
+                    container.getId(),
+                    List.of(container.getNames()));
+              } else {
+                // We only care about omega-managed compose files
+                if (runningComposeFile != null && runningComposeFile.contains("/omega/")) {
+                  if (!ourComposeFiles.contains(runningComposeFile)) {
+
+                    terminateContainer(container);
+                  }
                 }
-              }
               }
             });
     logger.atInfo().log("orphan cleanup complete");
   }
-  
+
   public boolean isCurrentProcess(Container container) {
-	  
-	 
-	  if (container.getId().startsWith( S.notBlank(System.getenv("HOSTNAME")).orElse("NOT FOUND"))) {
-		  return true;
-	  }
-	  return false;
+
+    if (container.getId().startsWith(S.notBlank(System.getenv("HOSTNAME")).orElse("NOT FOUND"))) {
+      return true;
+    }
+    return false;
   }
 }

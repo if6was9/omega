@@ -1,5 +1,13 @@
 package omega;
 
+import bx.util.BxException;
+import bx.util.Config;
+import bx.util.S;
+import bx.util.Slogger;
+import com.google.common.base.Preconditions;
+import com.google.common.io.Closer;
+import com.google.common.io.MoreFiles;
+import com.google.common.io.RecursiveDeleteOption;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
@@ -7,7 +15,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.function.Consumer;
-
 import org.eclipse.jgit.api.CloneCommand;
 import org.eclipse.jgit.api.FetchCommand;
 import org.eclipse.jgit.api.Git;
@@ -22,276 +29,268 @@ import org.eclipse.jgit.transport.FetchResult;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.slf4j.Logger;
 
-import com.google.common.base.Preconditions;
-import com.google.common.io.Closer;
-import com.google.common.io.MoreFiles;
-import com.google.common.io.RecursiveDeleteOption;
-
-import bx.util.BxException;
-import bx.util.Config;
-import bx.util.S;
-import bx.util.Slogger;
-
 public class GitRepoManager extends RepoManager {
 
-	static Logger logger = Slogger.forEnclosingClass();
+  static Logger logger = Slogger.forEnclosingClass();
 
-	String gitUrl;
+  String gitUrl;
 
+  String targetRef = null;
 
-	String targetRef = null;
+  boolean forceRecovery = false;
 
-	boolean forceRecovery = false;
+  public GitRepoManager gitUrl(String url) {
+    this.gitUrl = url;
+    return this;
+  }
 
-	public GitRepoManager gitUrl(String url) {
-		this.gitUrl = url;
-		return this;
-	}
+  private void defer(Closer closer, Git git) {
+    if (git != null) {
+      closer.register(toCloseable(git));
+    }
+  }
 
-	private void defer(Closer closer, Git git) {
-		if (git != null) {
-			closer.register(toCloseable(git));
-		}
-	}
+  public void clean() {
+    checkout(targetRef);
+  }
 
-	public void clean() {
-		checkout(targetRef);
-	}
+  public void checkout(String refName) {
 
-	public void checkout(String refName) {
-		try (Closer closer = Closer.create()) {
-			Git git = Git.open(getBaseDir());
-			defer(closer,git);
-			logger.atInfo().log("clean checkout of {}", refName);
-			org.eclipse.jgit.lib.Ref ref = git.checkout().setForced(true).setName(refName).call();
+    logger.atInfo().log("checkout({})", refName);
+    try (Closer closer = Closer.create()) {
+      Git git = Git.open(getBaseDir());
+      defer(closer, git);
+      logger.atInfo().log("clean checkout of {}", refName);
+      org.eclipse.jgit.lib.Ref ref = git.checkout().setForced(true).setName(refName).call();
 
-			git.reset().setMode(ResetType.HARD).setRef(refName).call();
+      git.reset().setMode(ResetType.HARD).setRef(refName).call();
 
-		} catch (GitAPIException | IOException e) {
-			throw new BxException(e);
-		}
-	}
+    } catch (GitAPIException | IOException e) {
+      throw new BxException(e);
+    }
+  }
 
-	public void fetch() {
-		
-	
-		try (Closer closer = Closer.create()) {
-			Git git = Git.open(getBaseDir());
-			defer(closer, git);
-			logger.atInfo().log("git fetch");
-			
-	
-			FetchCommand fc = git.fetch().setRefSpecs("+refs/heads/*:refs/remotes/origin/*");
-			FetchResult fr = fc.call();
+  public void fetch() {
 
-		
-		} catch (GitAPIException | IOException e) {
-			throw new BxException(e);
-		}
-	}
+    try (Closer closer = Closer.create()) {
+      Git git = Git.open(getBaseDir());
+      defer(closer, git);
+      logger.atInfo().log("git fetch");
 
-	public void forceReclone() {
-		forceRecovery = true;
-		this.deleteWorkspace();
-		clone();
-		forceRecovery = false;
-	}
+      FetchCommand fc = git.fetch().setRefSpecs("+refs/heads/*:refs/remotes/origin/*");
+      FetchResult fr = fc.call();
 
-	public GitRepoManager targetRef(String ref) {
-		this.targetRef = ref;
-		return this;
-	}
+    } catch (GitAPIException | IOException e) {
+      throw new BxException(e);
+    }
+  }
 
-	boolean isMissingOrEmpty(File f) {
-		if (!f.exists()) {
-			return true;
-		}
-		if (f.isDirectory() && f.listFiles() == null || f.listFiles().length == 0) {
-			return true;
-		}
-		return false;
-	}
+  public void forceReclone() {
+    forceRecovery = true;
+    this.deleteWorkspace();
+    clone();
+    forceRecovery = false;
+  }
 
-	public void update() {
+  public GitRepoManager targetRef(String ref) {
+    this.targetRef = ref;
+    return this;
+  }
 
-		logger.atInfo().log("*** GitRepoManager.update() *** ");
-		createTempWorkingDirIfNecessary();
+  boolean isMissingOrEmpty(File f) {
+    if (!f.exists()) {
+      return true;
+    }
+    if (f.isDirectory() && f.listFiles() == null || f.listFiles().length == 0) {
+      return true;
+    }
+    return false;
+  }
 
-		if (isMissingOrEmpty(getBaseDir())) {
-			clone();
-		} else {
-			try {
-				fetch();
-				clean();
-			} catch (RuntimeException e) {
-				logger.atWarn().setCause(e).log("problem with fetch");
-				forceReclone();
-			}
-		}
-		logger.atInfo().log("current branch={} rev={}",getBranchOrRef(), getCurrentRevision());
-	}
+  public void update() {
 
-	Closeable toCloseable(Git git) {
-		return new Closeable() {
+    logger.atInfo().log("*** GitRepoManager.update() *** ");
 
-			@Override
-			public void close() {
-				git.close();
-			}
-		};
-	}
+    createTempWorkingDirIfNecessary();
 
-	private void createTempWorkingDirIfNecessary() {
-		try {
-			if (getBaseDir() == null) {
+    if (isMissingOrEmpty(getBaseDir())) {
+      clone();
+    } else {
+      try {
+        fetch();
 
-				File tmpDir = Files.createTempDirectory("repo").toFile();
+        // If we started with a cloned repo but didn't have targetRef set,
+        // we need to find it from the checked-out repo.  If we don't set targetRef here,
+        // the clean() operation will fail.
+        if (S.isBlank(targetRef)) {
+          targetRef = getBranchOrRef();
+        }
 
-				baseDir(new File(tmpDir, "repo"));
-			}
-		} catch (IOException e) {
-			throw new BxException(e);
-		}
-	}
+        clean();
+      } catch (RuntimeException e) {
+        logger.atWarn().setCause(e).log("problem with fetch/clean");
+        forceReclone();
+      }
+    }
+    logger.atInfo().log("current branch={} rev={}", getBranchOrRef(), getCurrentRevision());
+  }
 
-	Optional<CredentialsProvider> getCredentialsProvider() {
+  Closeable toCloseable(Git git) {
+    return new Closeable() {
 
-		Config cfg = Config.get();
+      @Override
+      public void close() {
+        git.close();
+      }
+    };
+  }
 
-		if (cfg.get("GIT_PASSWORD").isPresent()) {
+  private void createTempWorkingDirIfNecessary() {
+    try {
+      if (getBaseDir() == null) {
 
-			UsernamePasswordCredentialsProvider cp = new UsernamePasswordCredentialsProvider(
-					cfg.get("GIT_USERNAME").orElse(""), cfg.get("GIT_PASSWORD").get().toCharArray());
-			return Optional.of(cp);
+        File tmpDir = Files.createTempDirectory("repo").toFile();
 
-		}
-		return Optional.empty();
-	}
+        baseDir(new File(tmpDir, "repo"));
+      }
+    } catch (IOException e) {
+      throw new BxException(e);
+    }
+  }
 
-	public <C extends GitCommand, T extends Object> TransportCommand<C, T> applyTransportConfig(
-			TransportCommand<C, T> command) {
+  Optional<CredentialsProvider> getCredentialsProvider() {
 
-		getCredentialsProvider().ifPresent(cp -> {
-			command.setCredentialsProvider(cp);
-		});
+    Config cfg = Config.get();
 
-		return command;
+    if (cfg.get("GIT_PASSWORD").isPresent()) {
 
-	}
+      UsernamePasswordCredentialsProvider cp =
+          new UsernamePasswordCredentialsProvider(
+              cfg.get("GIT_USERNAME").orElse(""), cfg.get("GIT_PASSWORD").get().toCharArray());
+      return Optional.of(cp);
+    }
+    return Optional.empty();
+  }
 
-	public String getCurrentRevision() {
-		
-			try (Closer closer = Closer.create()) {
-				Git git = Git.open(getBaseDir());
-				defer(closer,git);
-				
-				ObjectId id = git.getRepository().resolve(Constants.HEAD);
-				
-				return id.getName();
-			}
-			catch ( IOException e) {
-				throw new BxException(e);
-			}
-		
-	}
+  public <C extends GitCommand, T extends Object> TransportCommand<C, T> applyTransportConfig(
+      TransportCommand<C, T> command) {
 
-	public void withGit(Consumer<Git> func) {
-		if (getBaseDir() == null) {
-			return;
-		}
-		if (!getBaseDir().exists()) {
-			return;
-		}
-		try (Closer closer = Closer.create()) {
-			Git g = Git.open(getBaseDir());
-			defer(closer, g);
-			func.accept(g);
-		} catch (IOException e) {
-			throw new BxException(e);
-		}
-	}
+    getCredentialsProvider()
+        .ifPresent(
+            cp -> {
+              command.setCredentialsProvider(cp);
+            });
 
-	public File clone() {
-		try (Closer closer = Closer.create()) {
-			// Path p = java.nio.file.Files.createTempDirectory("repo");
+    return command;
+  }
 
-			Preconditions.checkState(S.isNotBlank(gitUrl), "GIT_URL not set");
+  public String getCurrentRevision() {
 
-		
-			createTempWorkingDirIfNecessary();
-			Path p = getBaseDir().toPath();
-			logger.atInfo().log("cloning {} into {}", gitUrl, p.toFile());
+    try (Closer closer = Closer.create()) {
+      Git git = Git.open(getBaseDir());
+      defer(closer, git);
 
-			CloneCommand cc = Git.cloneRepository();
-			applyTransportConfig(cc);
+      ObjectId id = git.getRepository().resolve(Constants.HEAD);
 
-			Git git = cc.setURI(gitUrl).setDirectory(getBaseDir()).call();
-			defer(closer, git);
-			baseDir(p.toFile());
+      return id.getName();
+    } catch (IOException e) {
+      throw new BxException(e);
+    }
+  }
 
-			var refs = git.getRepository().getRefDatabase().getRefsByPrefix("HEAD");
-			var headRef = refs.get(0).getObjectId().name();
-			
+  public void withGit(Consumer<Git> func) {
+    if (getBaseDir() == null) {
+      return;
+    }
+    if (!getBaseDir().exists()) {
+      return;
+    }
+    try (Closer closer = Closer.create()) {
+      Git g = Git.open(getBaseDir());
+      defer(closer, g);
+      func.accept(g);
+    } catch (IOException e) {
+      throw new BxException(e);
+    }
+  }
 
-			if (targetRef != null) {
-				checkout(targetRef);
-				var branchOrRef = git.getRepository().getFullBranch();
-				
-			
-			} else {
-				var branchName = git.getRepository().getFullBranch();
-				logger.atInfo().log("cloned to branch={} ref={}", branchName, headRef);
-				targetRef = branchName;
-			}
+  public File clone() {
+    try (Closer closer = Closer.create()) {
+      // Path p = java.nio.file.Files.createTempDirectory("repo");
 
-			return p.toFile();
-		} catch (IOException | GitAPIException e) {
-			throw new BxException(e);
-		}
-	}
+      Preconditions.checkState(S.isNotBlank(gitUrl), "GIT_URL not set");
 
-	boolean isSame(File f1, File f2) {
+      createTempWorkingDirIfNecessary();
+      Path p = getBaseDir().toPath();
+      logger.atInfo().log("cloning {} into {}", gitUrl, p.toFile());
 
-		try {
-			return f1.getCanonicalPath().equals(f2.getCanonicalPath());
-		} catch (IOException e) {
-			throw new BxException(e);
-		}
-	}
+      CloneCommand cc = Git.cloneRepository();
+      applyTransportConfig(cc);
 
-	public String getBranchOrRef() {
-		try (Closer closer = Closer.create()) {
-			Git git = Git.open(getBaseDir());
-			defer(closer,git);
-			return git.getRepository().getFullBranch();
-		}
-		catch ( IOException e) {
-			throw new BxException(e);
-		}
-	}
-	public void deleteWorkspace() {
-		File dir = this.getBaseDir();
-		if (dir == null || !dir.exists()) {
-			return;
-		} else if (dir.isFile()) {
-			dir.delete();
-			return;
-		} else if (dir.isDirectory()) {
-			// ok
-		} else {
-			throw new BxException("unknown fs type: " + dir);
-		}
+      Git git = cc.setURI(gitUrl).setDirectory(getBaseDir()).call();
+      defer(closer, git);
+      baseDir(p.toFile());
 
-		if (isSame(new File("/"), dir) || isSame(dir, new File(System.getProperty("user.home")))) {
+      var refs = git.getRepository().getRefDatabase().getRefsByPrefix("HEAD");
+      var headRef = refs.get(0).getObjectId().name();
 
-			throw new BxException("cannot delete: " + getBaseDir());
-		}
-		logger.atInfo().log("deleting " + dir.getAbsolutePath());
-		try {
-			MoreFiles.deleteRecursively(dir.toPath(), RecursiveDeleteOption.ALLOW_INSECURE);
-		} catch (IOException e) {
-			throw new BxException(e);
-		}
+      if (targetRef != null) {
+        checkout(targetRef);
+        var branchOrRef = git.getRepository().getFullBranch();
 
-	}
+      } else {
+        var branchName = git.getRepository().getFullBranch();
+        logger.atInfo().log("cloned to branch={} ref={}", branchName, headRef);
+        targetRef = branchName;
+      }
+
+      return p.toFile();
+    } catch (IOException | GitAPIException e) {
+      throw new BxException(e);
+    }
+  }
+
+  boolean isSame(File f1, File f2) {
+
+    try {
+      return f1.getCanonicalPath().equals(f2.getCanonicalPath());
+    } catch (IOException e) {
+      throw new BxException(e);
+    }
+  }
+
+  public String getBranchOrRef() {
+    try (Closer closer = Closer.create()) {
+      Git git = Git.open(getBaseDir());
+      defer(closer, git);
+      return git.getRepository().getFullBranch();
+    } catch (IOException e) {
+      throw new BxException(e);
+    }
+  }
+
+  public void deleteWorkspace() {
+    File dir = this.getBaseDir();
+    if (dir == null || !dir.exists()) {
+      return;
+    } else if (dir.isFile()) {
+      dir.delete();
+      return;
+    } else if (dir.isDirectory()) {
+      // ok
+    } else {
+      throw new BxException("unknown fs type: " + dir);
+    }
+
+    if (isSame(new File("/"), dir) || isSame(dir, new File(System.getProperty("user.home")))) {
+
+      throw new BxException("cannot delete: " + getBaseDir());
+    }
+    logger.atInfo().log("deleting " + dir.getAbsolutePath());
+    try {
+      MoreFiles.deleteRecursively(dir.toPath(), RecursiveDeleteOption.ALLOW_INSECURE);
+    } catch (IOException e) {
+      throw new BxException(e);
+    }
+  }
 }
