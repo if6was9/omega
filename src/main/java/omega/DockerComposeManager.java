@@ -187,12 +187,14 @@ public class DockerComposeManager {
 
     String composeAbsolutePath = n.path("x-omega").path("composeAbsolutePath").asString();
 
-    List<String> command = List.of(DOCKER, "compose", "-f", composeAbsolutePath, "up", "-d");
-    logger.atInfo().log("EXEC: {}", Joiner.on(" ").join(command));
+    File dir = new File(composeAbsolutePath).getParentFile();
+    List<String> command =
+        List.of(DOCKER, "compose", "-f", new File(composeAbsolutePath).getName(), "up", "-d");
+    logger.atInfo().log("EXEC: {} (in {})", Joiner.on(" ").join(command), dir.getAbsolutePath());
     try {
       new ProcessExecutor()
           .command(command)
-          .directory(new File(composeAbsolutePath).getParentFile())
+          .directory(dir)
           .redirectOutput(Slf4jStream.ofCaller().asInfo())
           .redirectErrorStream(true)
           .execute();
@@ -204,14 +206,15 @@ public class DockerComposeManager {
   public void ensureDown(JsonNode n) {
 
     String composeAbsolutePath = n.path("x-omega").path("composeAbsolutePath").asString();
-
-    List<String> command = List.of(DOCKER, "compose", "-f", composeAbsolutePath, "down");
-    logger.atInfo().log("EXEC: {}", Joiner.on(" ").join(command));
+    File dir = new File(composeAbsolutePath).getParentFile();
+    List<String> command =
+        List.of(DOCKER, "compose", "-f", new File(composeAbsolutePath).getName(), "down");
+    logger.atInfo().log("EXEC: {} (in {})", Joiner.on(" ").join(command), dir);
 
     try {
       new ProcessExecutor()
           .command(command)
-          .directory(new File(composeAbsolutePath).getParentFile())
+          .directory(dir)
           .redirectOutput(Slf4jStream.ofCaller().asInfo())
           .redirectErrorStream(true)
           .execute();

@@ -72,7 +72,7 @@ public class GitRepoManager extends RepoManager {
     try (Closer closer = Closer.create()) {
       Git git = Git.open(getBaseDir());
       defer(closer, git);
-      logger.atInfo().log("clean checkout of {}", refName);
+
       org.eclipse.jgit.lib.Ref ref = git.checkout().setForced(true).setName(refName).call();
 
       logRevisionChange(git);
@@ -91,7 +91,7 @@ public class GitRepoManager extends RepoManager {
       String currentRev = id.getName();
 
       if (!S.notBlank(currentRev).orElse("").equals(lastRevision)) {
-        logger.atInfo().log("revision {} ==> {}", lastRevision, currentRev);
+        logger.atInfo().log("revision {} ==> {}", S.notBlank(lastRevision).orElse(""), currentRev);
         lastRevision = currentRev;
       }
 
@@ -178,10 +178,8 @@ public class GitRepoManager extends RepoManager {
           logger.atInfo().log("remote URL: {}", url);
           if (S.isBlank(url) || !S.notBlank(url).orElse("").equals(this.gitUrl)) {
 
-            logger.atInfo().log("url does not match");
-
-          } else {
-            logger.atInfo().log("URL matches: {}", url);
+            logger.atInfo().log("configured origin ({}) != repo origin ({})", url, this.gitUrl);
+            forceReclone();
           }
 
         } catch (RepositoryNotFoundException e) {
