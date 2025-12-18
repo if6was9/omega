@@ -40,7 +40,8 @@ the following docker option `-v ${HOME}/.ssh:/root/.ssh`.
 
 ## Future
 
-* Provide a way to match on something other than docker engine ID  
+* Provide a way to match on something other than docker engine ID
+* Add support for Kubernetes  
 * Re-write this in Go, Python or Rust
 
 
