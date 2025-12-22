@@ -32,7 +32,7 @@
 		<dependency>
 			<groupId>io.github.if6was9</groupId>
 			<artifactId>bx</artifactId>
-			<version>0.0.8</version>
+			<version>0.1.1</version>
 		</dependency>
 
 		<dependency>
